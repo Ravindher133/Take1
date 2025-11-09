@@ -1,0 +1,52 @@
+---
+name: Build and deploy Nginx container to EC2
+
+on:
+  push:
+    branches: [ "main" ]
+  workflow_dispatch:
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      # copy the whole repo to EC2 (ansible, web/, etc.)
+      - name: Copy app files to EC2
+        uses: appleboy/scp-action@v0.1.7
+        with:
+          host: ${{ secrets.EC2_HOST }}
+          username: ${{ secrets.EC2_USER }}
+          key: ${{ secrets.EC2_SSH_KEY }}
+          source: "."
+          target: "/home/${{ secrets.EC2_USER }}/nginx-app"
+
+      - name: Deploy on EC2 (build + restart container)
+        uses: appleboy/ssh-action@v1.2.0
+        with:
+          host: ${{ secrets.EC2_HOST }}
+          username: ${{ secrets.EC2_USER }}
+          key: ${{ secrets.EC2_SSH_KEY }}
+          script: |
+            cd /home/${{ secrets.EC2_USER }}/nginx-app
+
+            echo "=== list files on EC2 ==="
+            ls -R .
+
+            echo "=== show html (for debug) ==="
+            cat web/index.html || true
+
+            # build image FROM the web folder, USING the Dockerfile inside web/
+            sudo docker build --no-cache -t custom-nginx:latest -f web/Dockerfile web
+
+            # stop & remove old container if running
+            if [ "$(sudo docker ps -q -f name=nginx-container)" ]; then
+              sudo docker stop nginx-container || true
+              sudo docker rm nginx-container || true
+            fi
+
+            # run new container on port 80
+            sudo docker run -d --name nginx-container -p 80:80 custom-nginx:latest

@@ -1,0 +1,54 @@
+---
+- name: Deploy custom Nginx container to EC2
+  hosts: ec2
+  become: yes
+  vars:
+    project_dir: /opt/nginx-app
+    image_name: custom-nginx:latest
+    container_name: nginx-container
+    host_port: 80
+    container_port: 80
+
+  tasks:
+    - name: Ensure project directory exists on EC2
+      ansible.builtin.file:
+        path: "{{ project_dir }}"
+        state: directory
+        mode: "0755"
+
+    # copy FROM your control machine (where playbook is) TO the EC2 box
+    # adjust ../web/ if your Dockerfile is elsewhere
+    - name: Copy Nginx build context (with Dockerfile) to EC2
+      ansible.builtin.copy:
+        src: ./web/
+        dest: "{{ project_dir }}/"
+        mode: "0644"
+
+    - name: Build Nginx Docker image on EC2
+      community.docker.docker_image:
+        name: "{{ image_name }}"
+        build:
+          path: "{{ project_dir }}"
+        source: build
+        state: present
+
+    - name: Stop old Nginx container if running
+      community.docker.docker_container:
+        name: "{{ container_name }}"
+        state: stopped
+      ignore_errors: yes
+
+    - name: Remove old Nginx container if present
+      community.docker.docker_container:
+        name: "{{ container_name }}"
+        state: absent
+      ignore_errors: yes
+
+    - name: Run Nginx container
+      community.docker.docker_container:
+        name: "{{ container_name }}"
+        image: "{{ image_name }}"
+        state: started
+        restart_policy: always
+        published_ports:
+          - "{{ host_port }}:{{ container_port }}"
